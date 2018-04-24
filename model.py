@@ -12,15 +12,16 @@ from tensorflow.python.layers import core as layers_core
 class Model(object):
     def __init__(self, config, session):
         self.config = config
-        self.lr = config["lr"]
 
         self.hidden_dim = config["hidden_dim"]
+        self.rnn_layer_num = config["rnn_layer_num"]
+        self.beam_search_width = config["beam_search_width"]
         self.dropout = config["dropout"]
+        self.use_train_sampling = config["use_train_sampling"]
 
         self.char_dim = config["char_dim"]
         self.char_num = config["char_num"]
 
-        self.begin_id = config["begin_symbol_id"]
         self.end_id = config["end_symbol_id"]
 
 
@@ -38,6 +39,8 @@ class Model(object):
             self.dropout = tf.placeholder(dtype=tf.float32, name = "Dropout")
             self.batch_size = tf.placeholder(tf.int32, [])
             self.mode = tf.placeholder(tf.string)
+            self.lr = tf.placeholder(tf.float32, [], name = "LearningRate")
+            self.train_sampling_prob = tf.placeholder(tf.float32, [], name = "TrainSamplingProb")
 
             real_char = tf.sign(self.sentences)
             char_len = tf.reduce_sum(real_char, reduction_indices = 1)
@@ -47,10 +50,13 @@ class Model(object):
 
             # decoder
             # batch_size * max_Q_len * hidden
-            helper = tf.contrib.seq2seq.TrainingHelper(self.char_embedding, char_len, time_major=False)
+            if self.use_train_sampling:
+                helper = tf.contrib.seq2seq.ScheduledEmbeddingTrainingHelper(self.char_embedding, char_len, self.char_lookup, 1 - self.train_sampling_prob, name = "ScheduledSampleTraingHelper")
+            else:
+                helper = tf.contrib.seq2seq.TrainingHelper(self.char_embedding, char_len, time_major=False)
 
             # batch_size * max_Q_len * V_size
-            self.output = self.decoder(helper, self.hidden_dim, name="decoder_for_train")
+            self.output = self.decoder(helper, None, name="decoder_for_train")
             # loss
             self.loss = self.loss_layer(self.output, char_len)
             self.merger_train_loss_op = tf.summary.merge(self.merger_train_loss)
@@ -66,7 +72,9 @@ class Model(object):
 
             initial_state_inference = self.initial_state_for_inference(self.char_embedding, char_len - 1)
 
-            self.output_predict = self.beam_search_decoder(initial_state_inference, self.last_chars, max_iter = 100, name = "decoder_for_inference")
+            helper_inference = tf.contrib.seq2seq.SampleEmbeddingHelper(self.char_lookup, self.last_chars, end_token = self.end_id, softmax_temperature = 0.5)
+            #self.output_predict = self.beam_search_decoder(initial_state_inference, self.last_chars, max_iter = 100, name = "decoder_for_inference")
+            self.output_predict = self.decoder(helper_inference, initial_state_inference, "decoder_for_inference", 100)
 
 
             self.session = session
@@ -84,32 +92,20 @@ class Model(object):
         embedding = tf.nn.dropout(embedding, keep_prob = dropout)
         return embedding
 
-    def lstm_layer(self, lstm_inputs, initial_state, lstm_dim, lengths, name = None):
-        with tf.variable_scope("lstm_decoder_layer" if not name else name, reuse = tf.AUTO_REUSE):
-            lstm_cell = CoupledInputForgetGateLSTMCell(lstm_dim, use_peepholes = True, initializer = self.initializer, state_is_tuple = True)
-            outputs, final_states  = tf.nn.dynamic_rnn(lstm_cell, lstm_inputs, dtype = tf.float32, sequence_length = lengths, initial_state = initial_state)
-        return outputs, final_states
-
-    def mult_layer_lstm(self, initial_states, char_embedding, lengths):
-        final_states = []
-        decoder_output = char_embedding
-        for i in range(self.decoder_layer_num - 1):
-            decoder_input = tf.nn.dropout(decoder_output, self.dropout)
-            with tf.variable_scope("mult_layer_lstm_decoder_%i_layer" % i):
-                decoder_output, final_state = self.lstm_layer(decoder_input, initial_states[i], self.hidden_dim, lengths)
-                final_states.append(final_state)
-        return decoder_output, final_states
-
     def single_lstm_cell(self, hidden_dim):
-        lstm_cell = CoupledInputForgetGateLSTMCell(hidden_dim, use_peepholes=True, initializer = self.initializer, state_is_tuple = True, reuse = False)
+        lstm_cell = CoupledInputForgetGateLSTMCell(hidden_dim, use_peepholes=True, initializer = self.initializer, state_is_tuple = True)
         lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob = self.dropout)
         return lstm_cell
 
-    def decoder(self, helper, lstm_dim, name = None, max_iter = None):
+    def stack_lstm_cell(self):
+        cells = [self.single_lstm_cell(self.hidden_dim) for _ in range(self.rnn_layer_num)]
+        return tf.nn.rnn_cell.MultiRNNCell(cells, True)
+
+    def decoder(self, helper, initial_state = None, name = None, max_iter = None):
         with tf.variable_scope("decoder" if not name else name):
-            self.cell = self.single_lstm_cell(lstm_dim)
+            self.cell = self.stack_lstm_cell()
             decoder = tf.contrib.seq2seq.BasicDecoder(self.cell, helper, output_layer = layers_core.Dense(self.char_num, use_bias=False),
-                                                      initial_state = self.cell.zero_state(self.batch_size, tf.float32))
+                                                      initial_state = self.cell.zero_state(self.batch_size, tf.float32) if not initial_state else initial_state)
 
             outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, output_time_major = False, impute_finished = True, maximum_iterations = max_iter)
         return outputs.rnn_output
@@ -121,11 +117,11 @@ class Model(object):
 
     def beam_search_decoder(self, initial_state, start_token, name=None, max_iter=None):
         with tf.variable_scope("beam_search_decoder" if not name else name):
-            decoder_initial_state = tf.contrib.seq2seq.tile_batch(initial_state, multiplier = 10)
+            decoder_initial_state = tf.contrib.seq2seq.tile_batch(initial_state, multiplier = self.beam_search_width)
             decoder = tf.contrib.seq2seq.BeamSearchDecoder(self.cell, embedding=self.char_lookup,
                                                                       start_tokens=start_token,
                                                                       end_token=self.end_id, output_layer = layers_core.Dense(self.char_num, use_bias=False),
-                                                      initial_state = decoder_initial_state, beam_width = 10)
+                                                      initial_state = decoder_initial_state, beam_width = self.beam_search_width)
             outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, output_time_major = False, impute_finished = False, maximum_iterations = max_iter)
             result = tf.transpose(outputs.predicted_ids, [0,2,1])
         return result
@@ -142,8 +138,8 @@ class Model(object):
 
         return train_loss
 
-    def run_step(self, is_train, batch):
-        feed_dict = self.create_feed_dict(is_train, batch)
+    def run_step(self, is_train, batch, lr = 1.0, sample_prob = 1.0):
+        feed_dict = self.create_feed_dict(is_train, batch, lr, sample_prob)
         if is_train:
             merged_summary, global_step, loss, _ = self.session.run(
                 [self.merger_train_loss_op, self.global_step, self.loss, self.train_op], feed_dict)
@@ -153,9 +149,11 @@ class Model(object):
             logits = self.session.run([self.output_predict], feed_dict)
             return logits
 
-    def create_feed_dict(self, is_train, batch):
+    def create_feed_dict(self, is_train, batch, lr, sample_prob):
         string, chars, last_chars = batch
         feed_dict = {
+            self.lr: lr,
+            self.train_sampling_prob: sample_prob,
             self.batch_size: len(batch[0]),
             self.dropout: 1.0,
             self.sentences: chars,
@@ -167,15 +165,11 @@ class Model(object):
             feed_dict[self.dropout] = self.config["dropout"]
         return feed_dict
 
-    def save_dev_test_summary(self):
-        merged_summary, global_epoch = self.session.run([self.merger_dev_test_evaluation_op, self.global_epoch])
-        self.summary_writer.add_summary(merged_summary, global_epoch)
-
     def evaluate(self, data_manager, id_to_char):
         results = []
         for batch in data_manager.iter_batch():
             scores = self.run_step(False, batch)
-            predict_senteces = self.index_to_sentence(scores, id_to_char)
+            predict_senteces = self.logit_to_sentence(scores, id_to_char)
             for sample in range(len(batch[0])):
                 sentences = batch[0][sample]
 
@@ -187,8 +181,12 @@ class Model(object):
                     one_line += u"".join(one_beam_result)
                     result.append(one_line)
                 results.append(result)
-
         return results
+
+    def evaluate_line(self, line_input, id_to_char):
+        scores = self.run_step(False, line_input)
+        predict_senteces = self.logit_to_sentence(scores, id_to_char)
+        return predict_senteces[0][0]
 
     # beam search result to sentences
     # return batch_size * beam_width sentences
@@ -201,4 +199,15 @@ class Model(object):
                 predict_sentence.append(sentence)
             predict_sentences.append(predict_sentence)
         return predict_sentences
+
+    # search which returns logits instead of char-id
+    def logit_to_sentence(self, scores, id_to_char):
+        predict_sentences = []
+        for line in scores[0]:
+            predict_sentence = [id_to_char[np.argmax(vec)] for vec in line]
+            predict_sentences.append([predict_sentence])
+        return predict_sentences
+
+
+
 
