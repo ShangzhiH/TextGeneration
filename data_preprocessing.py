@@ -13,5 +13,14 @@ def line_process():
                 if len(split_result) == 2:
                     f2.write(split_result[1])
 
+def content_to_multiple_lines():
+    with io.open("data/5wReviewLen20_30.csv", encoding="utf-8") as f1:
+        with io.open("data/5wReviewLen20_30_train.csv", "w", encoding="utf-8") as f2:
+            s = u""
+            for line in f1:
+                s += line.strip()
+            for i in range(0, len(s), 30):
+                f2.write(s[i:i+30] + "\n")
+
 if __name__ == "__main__":
-    line_process()
+    content_to_multiple_lines()

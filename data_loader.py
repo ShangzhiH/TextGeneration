@@ -56,7 +56,7 @@ class SentenceGenerator(object):
             # 空字符
             sentence = sentence.replace(u" ", u"#")
 
-            sentence_list = ["<begin>"] + list(sentence) + ["</begin>"]
+            sentence_list = list(sentence) + ["</begin>"] #
 
             yield sentence_list
         self.length = num
@@ -142,7 +142,7 @@ class BatchManager(object):
                 string = [word_token for word_token in sentence]
                 chars = [self.char_to_id[f(word) if f(word) in self.char_to_id else u"<UNK>"] for word in string]
             else:
-                string = [word_token for word_token in sentence[1:-1]]
+                string = [word_token for word_token in sentence[0:-1]]
                 chars = [self.char_to_id[f(word) if f(word) in self.char_to_id else u"<UNK>"] for word in string]
 
             data.append([string, chars])

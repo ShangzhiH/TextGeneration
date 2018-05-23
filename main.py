@@ -2,7 +2,8 @@
 
 import argparse
 
-from model_usage import ModelUsage
+from model_usage_dataset import ModelUsage
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -22,22 +23,40 @@ if __name__ == "__main__":
         type=bool,
         default=True
     )
-
+    parser.add_argument(
+        "--use_train_sampling",
+        type=bool,
+        default=True
+    )
+    parser.add_argument(
+        "--train_sample_prob",
+        type=float,
+        default=1.0
+    )
     parser.add_argument(
         "--char_dim",
         type=int,
-        default=100
+        default=200
     )
-
     parser.add_argument(
         "--hidden_dim",
         type=float,
         default=200
     )
     parser.add_argument(
+        "--rnn_layer_num",
+        type=int,
+        default=2
+    )
+    parser.add_argument(
+        "--infer_num",
+        type=int,
+        default=3
+    )
+    parser.add_argument(
         "--clip",
         type=float,
-        default=5
+        default=5.0
     )
     parser.add_argument(
         "--dropout",
@@ -64,7 +83,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=32
+        default=8
     )
     parser.add_argument(
         "--max_epoch",
@@ -74,7 +93,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--steps_check",
         type=int,
-        default=100,
+        default=10,
+    )
+    parser.add_argument(
+        "--steps_eval",
+        type=int,
+        default=10,
     )
     parser.add_argument(
         ## 存放文件的根目录
@@ -86,6 +110,11 @@ if __name__ == "__main__":
         "--ckpt_path",
         type=str,
         default="ckpt/",
+    )
+    parser.add_argument(
+        "--best_ckpt_path",
+        type=str,
+        default="best_ckpt/"
     )
     parser.add_argument(
         "--summary_path",
@@ -113,11 +142,6 @@ if __name__ == "__main__":
         default="config/",
     )
     parser.add_argument(
-        "--script_path",
-        type=str,
-        default="conlleval/",
-    )
-    parser.add_argument(
         "--result_path",
         type=str,
         default="result/",
@@ -130,10 +154,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_file",
         type=str,
-        default="sample_train",
+        default="weicheng_train.txt",
     )
     parser.add_argument(
         "--dev_file",
+        type=str,
+        default="ner_data_dev",
+    )
+    parser.add_argument(
+        "--test_file",
         type=str,
         default="ner_data_dev",
     )

@@ -12,8 +12,6 @@ import json
 import logging
 from bleu import compute_bleu
 
-
-
 reload(sys)
 sys.setdefaultencoding("utf-8")
 
@@ -27,6 +25,8 @@ def make_path(params):
     """
     if not tf.gfile.IsDirectory(params.ckpt_path):
         tf.gfile.MakeDirs(params.ckpt_path)
+    if not tf.gfile.IsDirectory(params.best_ckpt_path):
+        tf.gfile.MakeDirs(params.best_ckpt_path)
     if not tf.gfile.IsDirectory(params.summary_path):
         tf.gfile.MakeDirs(params.summary_path)
     if not os.path.isdir(params.log_path):
@@ -35,12 +35,12 @@ def make_path(params):
         tf.gfile.MakeDirs(params.map_path)
     if not tf.gfile.IsDirectory(params.vocab_path):
         tf.gfile.MakeDirs(params.vocab_path)
-    if not tf.gfile.IsDirectory(params.script_path):
-        tf.gfile.MakeDirs(params.script_path)
     if not tf.gfile.IsDirectory(params.result_path):
         tf.gfile.MakeDirs(params.result_path)
     if not tf.gfile.IsDirectory(params.config_path):
         tf.gfile.MakeDirs(params.config_path)
+
+
 
 
 def clean_map(params):
@@ -54,6 +54,9 @@ def clean_map(params):
 
     if tf.gfile.IsDirectory(params.map_path):
         tf.gfile.DeleteRecursively(params.map_path)
+
+    if tf.gfile.IsDirectory(params.best_ckpt_path):
+        tf.gfile.DeleteRecursively(params.best_ckpt_path)
 
 def clean(params):
     """
@@ -113,24 +116,28 @@ def print_config(config, logger):
     for k, v in config.items():
         logger.info("{}:\t{}".format(k.ljust(15), v))
 
-def create_model(session, Model_class, path, config, logger):
-    # create model, reuse parameters if exists
-    model = Model_class(config, session)
-
+def create_model(session, model, path, logger):
     ckpt = tf.train.get_checkpoint_state(path)
     if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
         logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
         model.saver.restore(session, ckpt.model_checkpoint_path)
     else:
         logger.info("Created model with fresh parameters.")
-        session.run(tf.global_variables_initializer())
+        with session.graph.as_default():
+            session.run(tf.global_variables_initializer())
     return model
+
+def load_model(session, model, path, logger):
+    ckpt = tf.train.get_checkpoint_state(path)
+    assert ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path)
+    logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+    model.saver.restore(session, ckpt.model_checkpoint_path)
 
 
 def save_model(sess, model, path, logger):
     checkpoint_path = os.path.join(path, "ner.ckpt")
     model.saver.save(sess, checkpoint_path)
-    logger.info("model saved")
+    logger.info("model saved in {}".format(path))
 
 
 def export_model(sess, model, path, version, logger, id_to_tag, char_to_id):
@@ -212,9 +219,6 @@ def result_to_json(string_list, tags, tag_type):
     return item
 
 def test_generation(results, path, logger):
-    """
-    Run perl script to evaluate model
-    """
     output_file = os.path.join(path, "generation_predict.utf8")
     with tf.gfile.GFile(output_file, "w") as f:
         for block in results:

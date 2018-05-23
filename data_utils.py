@@ -103,7 +103,7 @@ def create_mapping(dico):
     :return: 
     """
     sorted_items = sorted(dico.items(), key = lambda x: (-x[1], x[0]))
-    id_to_item = {id: item[0] for id, item in enumerate(sorted_items) if item[1] > 100} # item[0]是字 item[1]是字频
+    id_to_item = {id: item[0] for id, item in enumerate(sorted_items) if item[1] > 0} # item[0]是字 item[1]是字频
     item_to_id = {item: id for id, item in id_to_item.items()}
     return item_to_id, id_to_item
 
@@ -200,7 +200,7 @@ def replace_html(s):
     return(s)
 
 
-def input_from_line(left, term, right, char_to_id, use_html_tag):
+def input_from_line(line, char_to_id):
     """
     take sentence data and return an model input
     :param line: 
@@ -209,31 +209,16 @@ def input_from_line(left, term, right, char_to_id, use_html_tag):
     :return: 
     """
 
-    if type(left) == str:
-        left = left.decode("utf-8")
-        left = full_to_half(left)
-        left = replace_html(left)
-        left = left.replace(u" ", u"#")
-    if type(term) == str:
-        term = term.decode("utf-8")
-        term = full_to_half(term)
-        term = replace_html(term)
-        term = term.replace(u" ", u"#")
-    if type(right) == str:
-        right = right.decode("utf-8")
-        right = full_to_half(right)
-        right = replace_html(right)
-        right = right.replace(u" ", u"#")
+    if type(line) == str:
+        line = line.decode("utf-8")
+        line = full_to_half(line)
+        line = replace_html(line)
+        line = line.replace(u" ", u"#")
+
 
     #char_list = list(left) + [u"<dish>"] + list(term) + [u"</dish>"] + list(right)
-    char_list = list(left) + [u"<dish>"] + [u"</dish>"] + list(right)
-    inputs = list()
-    inputs.append([])
-
-    if use_html_tag:
-        None
-    else:
-        inputs.append([[char_to_id[char] if char in char_to_id else char_to_id[u"<UNK>"] for char in char_list]])
-        inputs.append([get_seg_features(right)])
-        inputs.append([[0]])
+    char_list = [u"<begin>"] + list(line)
+    inputs = [[char_list]]
+    inputs.append([[char_to_id[char] if char in char_to_id else char_to_id[u"<UNK>"] for char in char_list]])
+    inputs.append([inputs[-1][-1][-1]])
     return inputs
